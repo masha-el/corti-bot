@@ -28,9 +28,21 @@ def _get_service():
         
     return build("gmail", "v1", credentials=creds)
 
-def read_emails(query: str = "", max_results: int = 5) -> list[dict]:
+def read_emails(query: str = "", max_results: int = 5, unread_only: bool = True) -> list[dict]:
     service = _get_service()
-    search_query = query if query else "is:unread"
+    # Build search query
+    if query and unread_only:
+        search_query = f"is:unread {query}"
+    elif query:
+        search_query = query
+    elif unread_only:
+        search_query = "is:unread"
+    else:
+        search_query = ""  #empty query = all emails, sorted by date
+    
+    # cap at 5
+    max_results = min(max_results, 5)
+    
     results = service.users().messages().list(
         userId="me",
         q=search_query,

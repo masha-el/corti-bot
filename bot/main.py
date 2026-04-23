@@ -672,8 +672,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif intent == "gmail_read":
             emails = gmail.read_emails(
-                params.get("query", ""),
-                params.get("max_results", 5)
+                query=params.get("query", ""),
+                max_results=min(params.get("max_results", 5), 5),
+                unread_only=params.get("unread_only", True),
             )
             await _send_emails(update, emails, context)
         

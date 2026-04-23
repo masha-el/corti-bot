@@ -17,7 +17,7 @@ Respond ONLY with a valid JSON object. No markdown, no explanation, no extra tex
 
 Available intents:
 
-gmail_read:         {{"intent": "gmail_read",         "params": {{"query": "", "max_results": 5}}}}
+gmail_read:         {{"intent": "gmail_read",         "params": {{"query": "", "max_results": 5, "unread_only": false}}}}
 gmail_send:         {{"intent": "gmail_send",         "params": {{"to": "email@example.com", "subject": "...", "body": "..."}}}}
 calendar_read:      {{"intent": "calendar_read",      "params": {{"date": "today|tomorrow|this week|next week|DD-MM-YYYY", "period": "day|week"}}}}
 calendar_write:     {{"intent": "calendar_write",     "params": {{"title": "...", "date": "DD-MM-YYYY", "time": "HH:MM", "duration_minutes": 60}}}}
@@ -41,7 +41,10 @@ Rules:
 - Never calculate week dates yourself — always use the literal strings "this week" or "next week".
 - calendar_write: default time to "09:00" if not specified. Default duration to 60.
 - todoist_write priority: 1=urgent 2=high 3=normal 4=low. Default to 3.
-- gmail_read: if no specific query, use empty string.
+- gmail_read: if user asks for "last N emails" or "recent emails" set unread_only to false and max_results to N (max 5).
+- gmail_read: if user asks for "unread emails" set unread_only to true.
+- gmail_read: default unread_only to true when no preference is specified.
+- gmail_read: max_results never exceeds 5.
 - gmail_read: extract search terms into query using Gmail syntax where possible.
   Examples: "emails from Dan" → "from:dan", "unread emails" → "is:unread",
   "emails about interview" → "subject:interview"

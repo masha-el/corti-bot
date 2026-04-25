@@ -70,7 +70,7 @@ CLARIFICATION_PROMPTS = {
 
 AMBIGUOUS_ACTIONS = {
     # Calendar
-    "cal delete": "calendar_delete",
+    "cal del":    "calendar_delete",
     "cal remove": "calendar_delete",
     "cal edit":   "calendar_edit",
     "cal update": "calendar_edit",
@@ -233,19 +233,46 @@ async def handle_edit_conversation(
         context: ContextTypes.DEFAULT_TYPE,
         text: str
 ) -> bool:
-    """
-    Manages the multi-step cal edit flow.
-    Returns True if it handled the message, False if the message is unrelated.
-    """
     edit_state = context.user_data.get("edit_state")
 
-    # ── Step 1: received event name ─────────────────
-    if edit_state == "awaiting_title":
+    # ── Step 1: show this week's events ─────
+    if edit_state == "awaiting_edit_pick":
+        candidates = context.user_data.get("edit_candidates", [])
+
+        if text.strip().isdigit():
+            choice = int(text.strip()) - 1
+            if choice < 0 or choice >= len(candidates):
+                await update.message.reply_text(
+                    f"Please reply with a number between 1 and {len(candidates)}.",
+                    reply_markup=_cancel_keyboard()
+                )
+                return True
+        
+            event = candidates[choice]
+            context.user_data["edit_event"] = event
+            context.user_data["edit_state"] = "awaiting_field"
+
+            start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
+            dt = datetime.fromisoformat(start_raw)
+            formatted = dt.strftime("%A %d-%m-%Y at %H:%M")
+
+            await update.message.reply_text(
+                f"Got it: *{event.get('summary')}* — {formatted}\n\n"
+                f"What do you want to change?\n• title\n• date\n• time\n• duration",
+                parse_mode="Markdown",
+                reply_markup=_cancel_keyboard()
+            )
+            return True
+        
+        # User typed a name instead of a number
         context.user_data["edit_title"] = text
         context.user_data["edit_state"] = "awaiting_date"
-        await update.message.reply_text("What date is it on?", reply_markup=_cancel_keyboard())
+        await update.message.reply_text(
+            "What date is it on?",
+            reply_markup=_cancel_keyboard()
+        )
         return True
-
+    
     # ── Step 2: received date — search for event ──────────
     if edit_state == "awaiting_date":
         # Use router to resolve natural language date
@@ -300,7 +327,7 @@ async def handle_edit_conversation(
         )
         return True
     
-    # ── handle the user's number reply ─────────
+    # ── Step 3: handle the user's number reply ─────────
     if edit_state == "awaiting_clarification":
         candidates = context.user_data.get("edit_candidates", [])
         try:
@@ -333,7 +360,7 @@ async def handle_edit_conversation(
         )
         return True
     
-    # ── Step 3: received field to change ─────────
+    # ── Step 4: received field to change ─────────
     if edit_state == "awaiting_field":
         field = text.strip().lower()
         if field not in EDIT_FIELDS:
@@ -348,15 +375,16 @@ async def handle_edit_conversation(
         await update.message.reply_text(EDIT_FIELDS[field], reply_markup=_cancel_keyboard())
         return True
 
-    # ── Step 4: received new value — execute update ───
+    # ── Step 5: received new value — execute update ───
     if edit_state == "awaiting_value":
         event = context.user_data.get("edit_event")
         field = context.user_data.get("edit_field")
 
         # Resolve natural language for date/time fields
         if field == "date":
-            result = route(f"event on {text}")
-            new_value = result.get("params", {}).get("date", text)
+            new_value = resolve_date(text)
+        elif field == "time":
+            new_value = text.strip()
         else:
             new_value = text.strip()
 
@@ -537,36 +565,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check for ambiguous prefix commands
         ambiguous_intent, remaining_text = _detect_ambiguous_action(text)
         if ambiguous_intent:
-            # Handle cal edit/update specially — use dedicated conversation flow
-            if ambiguous_intent == "calendar_edit" and not remaining_text:
-                context.user_data["edit_state"] = "awaiting_title"
-                await update.message.reply_text("What's the name of the event you want to edit?", reply_markup=_cancel_keyboard())
-                return
-            
-            if ambiguous_intent == "calendar_delete" and not remaining_text:
+            if ambiguous_intent in ("calendar_edit", "calendar_delete") and not remaining_text:
                 events = calendar.get_raw_events("this week", "week")
 
                 if not events:
-                    context.user_data["delete_state"] = "awaiting_delete_title"
+                    state_key = "delete_state" if ambiguous_intent == "calendar_delete" else "edit_state"
+                    first_state = "awaiting_delete_title" if ambiguous_intent == "calendar_delete" else "awaiting_title"
+                    context.user_data[state_key] = first_state
                     await update.message.reply_text(
-                        "No events found this week. Type the name of the event you want to delete.",
+                        "No events found this week. Type the name of the event.",
                         reply_markup=_cancel_keyboard()
                     )
                     return
                 
-                context.user_data["delete_candidates"] = events
-                context.user_data["delete_state"] = "awaiting_delete_pick"
+                context.user_data["delete_candidates" if ambiguous_intent == "calendar_delete" else "edit_candidates"] = events
 
+                if ambiguous_intent == "calendar_delete":
+                    context.user_data["delete_state"] = "awaiting_delete_pick"
+                else:
+                    context.user_data["edit_state"] = "awaiting_edit_pick"
+                
                 lines = "\n".join(
-                    f"{i+1}. {e['title']} on {_fmt_event_dt(e['start'])}"
+                    f"{i+1}. {e.get('summary')} on "
+                    f"{datetime.fromisoformat(e['start'].get('dateTime', e['start'].get('date', ''))).strftime('%A %d-%m-%Y at %H:%M')}"
                     for i, e in enumerate(events)
                 )
+
+                action = "delete" if ambiguous_intent == "calendar_delete" else "edit"
                 await update.message.reply_text(
-                    f"I found the following events for this week. If you want to delete an event not from this week, just type its name:\n\n{lines}\n\nJust type the number of the event you want to delete.",
+                    f"Here are your events this week. If the event is not listed, just type its name:\n\n{lines}\n\nType the number of the event you want to {action}.",
                     reply_markup=_cancel_keyboard()
                 )
                 return
-            
+              
             if ambiguous_intent in ("todoist_complete", "todoist_delete") and not remaining_text:
                 all_tasks = todoist.read_tasks("all")
 
